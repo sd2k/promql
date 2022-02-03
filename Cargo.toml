@@ -5,6 +5,7 @@ version = "0.4.1"
 authors = ["vthriller <unixway.drive+rs@gmail.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/vthriller/promql"
+edition = "2021"
 
 [dependencies]
 quick-error = "2.0"
