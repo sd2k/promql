@@ -1,3 +1,4 @@
+use std::iter;
 use std::ops::{Range, RangeFrom, RangeTo};
 
 use nom::branch::alt;
@@ -15,7 +16,7 @@ use nom::{
 use crate::str::string;
 use crate::utils::{delimited_ws, value, IResult};
 use crate::vec::{label_name, vector, Vector};
-use crate::{tuple_separated, ParserOptions};
+use crate::{tuple_separated, LabelMatch, ParserOptions};
 
 /// PromQL operators
 #[derive(Debug, PartialEq)]
@@ -139,6 +140,155 @@ impl Node {
 	}
 	fn negation(x: Node) -> Node {
 		Node::Negation(Box::new(x))
+	}
+
+	/**
+	Return an iterator of series names present in this node.
+
+	```
+	let opts = promql::ParserOptions::new()
+		.allow_periods(false)
+		.build();
+	let query = r#"
+		sum(1 - something_used{env="production"} / something_total) by (instance)
+		and ignoring (instance)
+		sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100
+	"#;
+	let ast = promql::parse(query, opts).expect("valid query");
+	let series: Vec<String> = ast.series_names().collect(); assert_eq!(
+		series,
+		vec![
+			"something_used".to_string(),
+			"something_total".to_string(),
+			"some_queries".to_string(),
+		],
+	);
+	```
+	*/
+	pub fn series_names(&self) -> impl Iterator<Item = String> + '_ {
+		self.vectors().filter_map(|x| {
+			x.labels.iter().find_map(|x| {
+				(x.name == "__name__").then(|| {
+					String::from_utf8(x.value.clone())
+						.expect("series names should always be valid utf8")
+				})
+			})
+		})
+	}
+
+	/**
+	Return an iterator of vectors present in this node.
+
+	```
+	use promql::{LabelMatch, LabelMatchOp, Vector};
+	let opts = promql::ParserOptions::new()
+		.allow_periods(false)
+		.build();
+	let query = r#"
+		sum(1 - something_used{env="production"} / something_total) by (instance)
+		and ignoring (instance)
+		sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100
+	"#;
+	let ast = promql::parse(query, opts).expect("valid query");
+	let vectors: Vec<&Vector> = ast.vectors().collect();
+	assert_eq!(
+		vectors,
+		vec![
+			&Vector {
+				labels: vec![
+					LabelMatch {
+						name: "__name__".to_string(),
+						op: LabelMatchOp::Eq,
+						value: b"something_used".to_vec(),
+					},
+					LabelMatch {
+						name: "env".to_string(),
+						op: LabelMatchOp::Eq,
+						value: b"production".to_vec(),
+					},
+				],
+				range: None,
+				offset: None,
+			},
+			&Vector {
+				labels: vec![
+					LabelMatch {
+						name: "__name__".to_string(),
+						op: LabelMatchOp::Eq,
+						value: b"something_total".to_vec(),
+					},
+				],
+				range: None,
+				offset: None,
+			},
+			&Vector {
+				labels: vec![
+					LabelMatch {
+						name: "__name__".to_string(),
+						op: LabelMatchOp::Eq,
+						value: b"some_queries".to_vec(),
+					},
+					LabelMatch {
+						name: "instance".to_string(),
+						op: LabelMatchOp::REq,
+						value: b"localhost\\d+".to_vec(),
+					},
+				],
+				range: Some(300.0),
+				offset: None,
+			},
+		],
+	);
+	```
+	*/
+	pub fn vectors(&self) -> Box<dyn Iterator<Item = &Vector> + '_> {
+		match self {
+			Self::Operator { x, y, .. } => Box::new(x.vectors().chain(y.vectors())),
+			Self::Vector(v) => Box::new(iter::once(v)),
+			Self::Scalar(_) | Self::String(_) => Box::new(iter::empty()),
+			Self::Function { args, .. } => Box::new(args.iter().flat_map(|node| node.vectors())),
+			Self::Negation(node) => node.vectors(),
+		}
+	}
+
+	/**
+	Return an iterator of label matches present in this node.
+
+	Note that this _does not_ include the "__name__" label.
+
+	```
+	use promql::{LabelMatch, LabelMatchOp};
+	let opts = promql::ParserOptions::new()
+		.allow_periods(false)
+		.build();
+	let query = r#"
+		sum(1 - something_used{env="production"} / something_total) by (instance)
+		and ignoring (instance)
+		sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100
+	"#;
+	let ast = promql::parse(query, opts).expect("valid query");
+	let label_matches: Vec<&LabelMatch> = ast.label_matches().collect();
+	assert_eq!(
+		label_matches,
+		vec![
+			&LabelMatch {
+				name: "env".to_string(),
+				op: LabelMatchOp::Eq,
+				value: b"production".to_vec(),
+			},
+			&LabelMatch {
+				name: "instance".to_string(),
+				op: LabelMatchOp::REq,
+				value: b"localhost\\d+".to_vec(),
+			},
+		],
+	);
+	```
+	*/
+	pub fn label_matches(&self) -> impl Iterator<Item = &LabelMatch> {
+		self.vectors()
+			.flat_map(|v| v.labels.iter())
+			.filter(|l| l.name != "__name__")
 	}
 }
 
@@ -651,7 +801,6 @@ where
 #[cfg(test)]
 mod tests {
 	use super::*;
-	
 
 	use self::Node::{Function, Scalar};
 	use self::Op::*;
