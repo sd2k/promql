@@ -1,3 +1,4 @@
+use std::fmt;
 use std::ops::{RangeFrom, RangeTo};
 
 use nom::branch::alt;
@@ -11,9 +12,13 @@ use nom::{
 	Offset, Slice,
 };
 
-use crate::str::string;
-use crate::utils::{surrounded_ws, value, IResult};
-use crate::{tuple_separated, ParserOptions};
+use crate::{
+	str::string,
+	time_duration::TimeDuration,
+	tuple_separated,
+	utils::{surrounded_ws, value, IResult},
+	ParserOptions, NAME,
+};
 
 /// Label filter operators.
 #[derive(Debug, PartialEq, Clone)]
@@ -28,12 +33,35 @@ pub enum LabelMatchOp {
 	RNe,
 }
 
+impl fmt::Display for LabelMatchOp {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Eq => write!(f, "="),
+			Self::Ne => write!(f, "!="),
+			Self::REq => write!(f, "=~"),
+			Self::RNe => write!(f, "!~"),
+		}
+	}
+}
+
 /// Single label filter.
 #[derive(Debug, PartialEq)]
 pub struct LabelMatch {
 	pub name: String,
 	pub op: LabelMatchOp,
 	pub value: Vec<u8>,
+}
+
+impl fmt::Display for LabelMatch {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(
+			f,
+			r#"{}{}"{}""#,
+			self.name,
+			self.op,
+			String::from_utf8_lossy(&self.value).replace('\\', "\\\\"),
+		)
+	}
 }
 
 fn label_set<I, C>(input: I) -> IResult<I, Vec<LabelMatch>>
@@ -97,9 +125,45 @@ pub struct Vector {
 	/// Set of label filters
 	pub labels: Vec<LabelMatch>,
 	/// Range for range vectors, in seconds, e.g. `Some(300.)` for `[5m]`
-	pub range: Option<f32>,
+	pub range: Option<f64>,
 	/// Offset in seconds, e.g. `Some(3600.)` for `offset 1h`
-	pub offset: Option<f32>,
+	pub offset: Option<f64>,
+}
+
+impl fmt::Display for Vector {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let mut named = false;
+		if let Some(name) = self.labels.iter().find_map(|label_match| {
+			(label_match.name == NAME).then(|| String::from_utf8_lossy(&label_match.value))
+		}) {
+			write!(f, "{}", name)?;
+			named = true;
+		}
+		if named && self.labels.len() == 1 {
+			return Ok(());
+		}
+		write!(f, "{{")?;
+		let labels = self
+			.labels
+			.iter()
+			.filter(|label_match| label_match.name != NAME)
+			.enumerate();
+		for (i, label) in labels {
+			if i == 0 {
+				write!(f, "{}", label)?;
+			} else {
+				write!(f, ", {}", label)?;
+			}
+		}
+		write!(f, "}}")?;
+		if let Some(range) = self.range {
+			write!(f, "[{}]", TimeDuration(range))?;
+		}
+		if let Some(offset) = self.offset {
+			write!(f, " offset [{}]", TimeDuration(offset))?;
+		}
+		Ok(())
+	}
 }
 
 fn instant_vec<I, C>(input: I, opts: ParserOptions) -> IResult<I, Vec<LabelMatch>>
@@ -126,7 +190,7 @@ where
 
 	let mut ret = match name {
 		Some(name) => vec![LabelMatch {
-			name: "__name__".to_string(),
+			name: NAME.to_string(),
 			op: LabelMatchOp::Eq,
 			value: name.into_bytes(),
 		}],
@@ -156,8 +220,8 @@ where
 fn range_literal_part<I, C>(
 	input: I,
 	opts: ParserOptions,
-	max_duration: Option<f32>,
-) -> IResult<I, (f32, f32)>
+	max_duration: Option<f64>,
+) -> IResult<I, (f64, f64)>
 where
 	I: Clone
 		+ AsBytes
@@ -187,7 +251,7 @@ where
 				// FIXME unwrap? FIXME copy-pasted from expr.rs
 				|n| {
 					unsafe { String::from_utf8_unchecked(n.as_bytes().to_vec()) }
-						.parse::<f32>()
+						.parse::<f64>()
 						.unwrap()
 				},
 			),
@@ -220,8 +284,8 @@ where
 fn range_compound_literal<I, C>(
 	input: I,
 	opts: ParserOptions,
-	max_duration: Option<f32>,
-) -> IResult<I, f32>
+	max_duration: Option<f64>,
+) -> IResult<I, f64>
 where
 	I: Clone
 		+ Copy
@@ -245,7 +309,7 @@ where
 	Ok((input, amount * duration + rest))
 }
 
-fn range_literal<I, C>(input: I, opts: ParserOptions) -> IResult<I, f32>
+fn range_literal<I, C>(input: I, opts: ParserOptions) -> IResult<I, f64>
 where
 	I: Clone
 		+ Copy
@@ -385,7 +449,7 @@ where
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::utils::tests::*;
+	use crate::{parse, utils::tests::*};
 	use nom::error::{ErrorKind, VerboseErrorKind};
 
 	fn cbs(s: &str) -> &[u8] {
@@ -750,5 +814,33 @@ mod tests {
 			range_literal(cbs("500ms"), opts),
 			Ok((cbs("s"), 500. * 60.))
 		);
+	}
+
+	#[test]
+	fn display() {
+		for (query, expected) in [
+			("node_load1", "node_load1"),
+			(r#"node_load1{foo="bar"}"#, r#"node_load1{foo="bar"}"#),
+			(
+				r#"node_load1{foo="has_\\n_newlines"}"#,
+				r#"node_load1{foo="has_\\n_newlines"}"#,
+			),
+			(
+				r#"sum(1 - something_used{env="production"} / something_total) by (instance)
+and ignoring (instance)
+sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100"#,
+				r#"sum(1 - something_used{env="production"} / something_total) by (instance) and ignoring (instance) sum(rate(some_queries{instance=~"localhost\\d+"}[5m])) > 100"#,
+			),
+		] {
+			let node = parse(query, Default::default()).unwrap();
+			assert_eq!(
+				node.to_string(),
+				expected,
+				"\n\n{}\n\nshould format to\n\n{}, got\n\n{}\n\n",
+				query,
+				expected,
+				node.to_string(),
+			);
+		}
 	}
 }

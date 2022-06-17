@@ -1,5 +1,7 @@
-use std::iter;
-use std::ops::{Range, RangeFrom, RangeTo};
+use std::{
+	fmt, iter,
+	ops::{Range, RangeFrom, RangeTo},
+};
 
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case};
@@ -58,11 +60,69 @@ pub enum Op {
 	Or(Option<OpMod>),
 }
 
+fn write_with_opmod(f: &mut fmt::Formatter<'_>, s: &str, opmod: &Option<OpMod>) -> fmt::Result {
+	write!(f, "{}", s)?;
+	if let Some(m) = opmod {
+		write!(f, " {}", m)?;
+	}
+	Ok(())
+}
+
+fn write_with_bool_and_opmod(
+	f: &mut fmt::Formatter<'_>,
+	s: &str,
+	b: bool,
+	opmod: &Option<OpMod>,
+) -> fmt::Result {
+	write!(f, "{}", s)?;
+	if b {
+		write!(f, " bool")?;
+	}
+	if let Some(m) = opmod {
+		write!(f, " {}", m)?;
+	}
+	Ok(())
+}
+
+impl fmt::Display for Op {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Pow(m) => write_with_opmod(f, "^", m),
+			Self::Mul(m) => write_with_opmod(f, "*", m),
+			Self::Div(m) => write_with_opmod(f, "/", m),
+			Self::Mod(m) => write_with_opmod(f, "%", m),
+			Self::Plus(m) => write_with_opmod(f, "+", m),
+			Self::Minus(m) => write_with_opmod(f, "-", m),
+
+			Self::Eq(b, m) => write_with_bool_and_opmod(f, "==", *b, m),
+			Self::Ne(b, m) => write_with_bool_and_opmod(f, "*", *b, m),
+			Self::Lt(b, m) => write_with_bool_and_opmod(f, "<", *b, m),
+			Self::Gt(b, m) => write_with_bool_and_opmod(f, ">", *b, m),
+			Self::Le(b, m) => write_with_bool_and_opmod(f, "<=", *b, m),
+			Self::Ge(b, m) => write_with_bool_and_opmod(f, ">=", *b, m),
+
+			Self::And(m) => write_with_opmod(f, "and", m),
+			Self::Unless(m) => write_with_opmod(f, "unless", m),
+			Self::Or(m) => write_with_opmod(f, "or", m),
+		}
+	}
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum OpModAction {
 	RestrictTo,
 	Ignore,
 }
+
+impl fmt::Display for OpModAction {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::RestrictTo => write!(f, "on"),
+			Self::Ignore => write!(f, "ignoring"),
+		}
+	}
+}
+
 /// Vector matching operator modifier (`on (…)`/`ignoring (…)`).
 #[derive(Debug, PartialEq)]
 pub struct OpMod {
@@ -74,11 +134,31 @@ pub struct OpMod {
 	pub group: Option<OpGroupMod>,
 }
 
+impl fmt::Display for OpMod {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{} ({})", self.action, self.labels.join(", "))?;
+		if let Some(group) = &self.group {
+			write!(f, " {}", group)?;
+		}
+		Ok(())
+	}
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum OpGroupSide {
 	Left,
 	Right,
 }
+
+impl fmt::Display for OpGroupSide {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Left => write!(f, "group_left"),
+			Self::Right => write!(f, "group_right"),
+		}
+	}
+}
+
 /// Vector grouping operator modifier (`group_left(…)`/`group_right(…)`).
 #[derive(Debug, PartialEq)]
 pub struct OpGroupMod {
@@ -86,16 +166,38 @@ pub struct OpGroupMod {
 	pub labels: Vec<String>,
 }
 
+impl fmt::Display for OpGroupMod {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{} ({})", self.side, self.labels.join(", "))
+	}
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum AggregationAction {
 	Without,
 	By,
 }
+
+impl fmt::Display for AggregationAction {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Without => write!(f, "without"),
+			Self::By => write!(f, "by"),
+		}
+	}
+}
+
 #[derive(Debug, PartialEq)]
 pub struct AggregationMod {
 	// Action applied to a list of vectors; whether `by (…)` or `without (…)` is used.
 	pub action: AggregationAction,
 	pub labels: Vec<String>,
+}
+
+impl fmt::Display for AggregationMod {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{} ({})", self.action, self.labels.join(", "))
+	}
 }
 
 /// AST node.
@@ -128,6 +230,7 @@ pub enum Node {
 	/// Unary negation, e.g. `-b` in `a + -b`
 	Negation(Box<Node>),
 }
+
 impl Node {
 	// these functions are here primarily to avoid explicit mention of `Box::new()` in the code
 
@@ -289,6 +392,40 @@ impl Node {
 		self.vectors()
 			.flat_map(|v| v.labels.iter())
 			.filter(|l| l.name != "__name__")
+	}
+}
+
+impl fmt::Display for Node {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Vector(v) => write!(f, "{}", v),
+			Self::Scalar(lit) => write!(f, "{}", lit),
+			Self::String(lit) => write!(f, "{}", String::from_utf8_lossy(lit)),
+			Self::Negation(node) => write!(f, "-{}", node),
+			Self::Function {
+				name,
+				args,
+				aggregation,
+			} => {
+				write!(f, "{}(", name)?;
+				for (i, arg) in args.iter().enumerate() {
+					if i == 0 {
+						write!(f, "{}", arg)?;
+					} else {
+						write!(f, ", {}", arg)?;
+					}
+				}
+				if let Some(agg) = aggregation {
+					write!(f, ") {}", agg)?;
+				} else {
+					write!(f, ")")?;
+				}
+				Ok(())
+			}
+			Self::Operator { x, op, y } => {
+				write!(f, "{} {} {}", x, op, y)
+			}
+		}
 	}
 }
 

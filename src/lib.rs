@@ -83,6 +83,7 @@ but closure-returning parsers suck more:
 
 pub(crate) mod expr;
 pub(crate) mod str;
+pub(crate) mod time_duration;
 pub(crate) mod utils;
 pub(crate) mod vec;
 
@@ -93,6 +94,8 @@ use nom::error::VerboseError;
 
 extern crate builder_pattern;
 use builder_pattern::Builder;
+
+const NAME: &str = "__name__";
 
 /// Options that allow or disallow certain query language features.
 #[derive(Clone, Copy, Builder)]
