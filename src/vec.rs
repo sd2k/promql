@@ -1,4 +1,5 @@
 use std::fmt;
+use std::hash::Hash;
 use std::ops::{RangeFrom, RangeTo};
 
 use nom::branch::alt;
@@ -21,7 +22,7 @@ use crate::{
 };
 
 /// Label filter operators.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Copy, Debug, PartialEq, Clone, Hash)]
 pub enum LabelMatchOp {
 	/** `=`  */
 	Eq,
@@ -45,7 +46,7 @@ impl fmt::Display for LabelMatchOp {
 }
 
 /// Single label filter.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub struct LabelMatch {
 	pub name: String,
 	pub op: LabelMatchOp,
@@ -120,7 +121,7 @@ assert_eq!(
 # }
 ```
 */
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Vector {
 	/// Set of label filters
 	pub labels: Vec<LabelMatch>,
@@ -128,6 +129,28 @@ pub struct Vector {
 	pub range: Option<f64>,
 	/// Offset in seconds, e.g. `Some(3600.)` for `offset 1h`
 	pub offset: Option<f64>,
+}
+
+impl Hash for Vector {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+		let mut labels = self.labels.clone();
+		labels.sort_by(|left, right| left.name.cmp(&right.name));
+		labels.hash(state);
+		self.range.map(|x| x.to_string()).hash(state);
+		self.offset.map(|x| x.to_string()).hash(state);
+	}
+}
+
+impl PartialEq for Vector {
+	fn eq(&self, other: &Self) -> bool {
+		let mut self_labels = self.labels.clone();
+		let mut other_labels = other.labels.clone();
+		self_labels.sort_by(|left, right| left.name.cmp(&right.name));
+		other_labels.sort_by(|left, right| left.name.cmp(&right.name));
+		self_labels == other_labels
+			&& self.range.map(|x| x.to_string()) == other.range.map(|x| x.to_string())
+			&& self.offset.map(|x| x.to_string()) == other.offset.map(|x| x.to_string())
+	}
 }
 
 impl fmt::Display for Vector {

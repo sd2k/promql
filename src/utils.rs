@@ -6,7 +6,6 @@ use nom::error::VerboseError;
 
 pub(crate) type IResult<I, O> = nom::IResult<I, O, VerboseError<I>>;
 
-
 use nom::{AsChar, InputTakeAtPosition};
 
 use nom::Parser;

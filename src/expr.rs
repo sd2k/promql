@@ -1,5 +1,8 @@
 use std::{
-	fmt, iter,
+	fmt,
+	hash::Hash,
+	iter,
+	mem::discriminant,
 	ops::{Range, RangeFrom, RangeTo},
 };
 
@@ -21,7 +24,7 @@ use crate::vec::{label_name, vector, Vector};
 use crate::{tuple_separated, LabelMatch, ParserOptions};
 
 /// PromQL operators
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub enum Op {
 	/** `^` */
 	Pow(Option<OpMod>),
@@ -108,7 +111,7 @@ impl fmt::Display for Op {
 	}
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Copy, Debug, PartialEq, Clone, Hash)]
 pub enum OpModAction {
 	RestrictTo,
 	Ignore,
@@ -124,7 +127,7 @@ impl fmt::Display for OpModAction {
 }
 
 /// Vector matching operator modifier (`on (…)`/`ignoring (…)`).
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub struct OpMod {
 	/// Action applied to a list of vectors; whether `on (…)` or `ignored(…)` is used after the operator.
 	pub action: OpModAction,
@@ -144,7 +147,7 @@ impl fmt::Display for OpMod {
 	}
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Copy, Debug, PartialEq, Clone, Hash)]
 pub enum OpGroupSide {
 	Left,
 	Right,
@@ -160,7 +163,7 @@ impl fmt::Display for OpGroupSide {
 }
 
 /// Vector grouping operator modifier (`group_left(…)`/`group_right(…)`).
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub struct OpGroupMod {
 	pub side: OpGroupSide,
 	pub labels: Vec<String>,
@@ -172,7 +175,7 @@ impl fmt::Display for OpGroupMod {
 	}
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub enum AggregationAction {
 	Without,
 	By,
@@ -187,7 +190,7 @@ impl fmt::Display for AggregationAction {
 	}
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub struct AggregationMod {
 	// Action applied to a list of vectors; whether `by (…)` or `without (…)` is used.
 	pub action: AggregationAction,
@@ -201,7 +204,7 @@ impl fmt::Display for AggregationMod {
 }
 
 /// AST node.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Node {
 	/// Operator: `a + ignoring (foo) b`
 	Operator {
@@ -230,6 +233,70 @@ pub enum Node {
 	/// Unary negation, e.g. `-b` in `a + -b`
 	Negation(Box<Node>),
 }
+
+impl Hash for Node {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+		discriminant(self).hash(state);
+		match self {
+			Node::Operator { x, op, y } => {
+				x.hash(state);
+				op.hash(state);
+				y.hash(state);
+			}
+			Node::Vector(v) => v.hash(state),
+			Node::Scalar(s) => s.to_string().hash(state),
+			Node::String(s) => s.hash(state),
+			Node::Function {
+				name,
+				args,
+				aggregation,
+			} => {
+				name.hash(state);
+				args.hash(state);
+				aggregation.hash(state);
+			}
+			Node::Negation(n) => n.hash(state),
+		}
+	}
+}
+
+impl PartialEq for Node {
+	fn eq(&self, other: &Self) -> bool {
+		match (self, other) {
+			(
+				Self::Operator {
+					x: l_x,
+					op: l_op,
+					y: l_y,
+				},
+				Self::Operator {
+					x: r_x,
+					op: r_op,
+					y: r_y,
+				},
+			) => l_x == r_x && l_op == r_op && l_y == r_y,
+			(Self::Vector(l0), Self::Vector(r0)) => l0 == r0,
+			(Self::Scalar(l0), Self::Scalar(r0)) => l0.to_string() == r0.to_string(),
+			(Self::String(l0), Self::String(r0)) => l0 == r0,
+			(
+				Self::Function {
+					name: l_name,
+					args: l_args,
+					aggregation: l_aggregation,
+				},
+				Self::Function {
+					name: r_name,
+					args: r_args,
+					aggregation: r_aggregation,
+				},
+			) => l_name == r_name && l_args == r_args && l_aggregation == r_aggregation,
+			(Self::Negation(l0), Self::Negation(r0)) => l0 == r0,
+			_ => false,
+		}
+	}
+}
+
+impl Eq for Node {}
 
 impl Node {
 	// these functions are here primarily to avoid explicit mention of `Box::new()` in the code
