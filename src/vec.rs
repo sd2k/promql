@@ -131,6 +131,70 @@ pub struct Vector {
 	pub offset: Option<f64>,
 }
 
+impl Vector {
+	pub fn name(&self) -> Option<&str> {
+		self.labels
+			.iter()
+			.find_map(|l| {
+				(l.name == NAME).then(|| {
+					// This should never really fail because Prometheus requires
+					// metric names to be valid UTF8, but we can avoid using
+					// unsafe by just transposing and flattening the option.
+					std::str::from_utf8(&l.value)
+				})
+			})
+			.transpose()
+			.ok()
+			.flatten()
+	}
+
+	pub fn with_name(self, name: String) -> Self {
+		let name = name.into_bytes();
+		let mut labels = self.labels.clone();
+		if let Some(n) = labels.iter_mut().find(|l| l.name == NAME) {
+			n.value = name;
+		} else {
+			labels.push(LabelMatch {
+				name: NAME.to_string(),
+				op: LabelMatchOp::Eq,
+				value: name,
+			});
+		}
+		Self { labels, ..self }
+	}
+
+	pub fn renamed<F>(self, func: F) -> Self
+	where
+		F: Fn(Option<&str>) -> String,
+	{
+		let name = func(
+			self.labels
+				.iter()
+				.find_map(|l| (l.name == NAME).then(|| std::str::from_utf8(&l.value).ok()))
+				.flatten(),
+		);
+		self.with_name(name)
+	}
+
+	pub fn with_range(self, range: f64) -> Self {
+		Self {
+			range: Some(range),
+			..self
+		}
+	}
+
+	pub fn without_label(self, label: impl AsRef<str>) -> Self {
+		Self {
+			labels: self
+				.labels
+				.into_iter()
+				.filter(|x| x.name != label.as_ref())
+				.collect(),
+			..self
+		}
+	}
+}
+
 impl Hash for Vector {
 	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
 		let mut labels = self.labels.clone();

@@ -460,6 +460,47 @@ impl Node {
 			.flat_map(|v| v.labels.iter())
 			.filter(|l| l.name != "__name__")
 	}
+
+	pub fn remove_label_matches(self, label_names: &[&str]) -> Self {
+		match self {
+			Node::Operator { x, op, y } => Node::Operator {
+				x: Box::new(x.remove_label_matches(label_names)),
+				y: Box::new(y.remove_label_matches(label_names)),
+				op,
+			},
+			Node::Vector(mut v) => {
+				v.labels = v
+					.labels
+					.into_iter()
+					.filter(|lm| !label_names.contains(&lm.name.as_str()))
+					.collect();
+				Node::Vector(v)
+			}
+			Node::Scalar(s) => Node::Scalar(s),
+			Node::String(s) => Node::String(s),
+			Node::Function {
+				name,
+				args,
+				aggregation,
+			} => Node::Function {
+				name,
+				args: args
+					.into_iter()
+					.map(|x| x.remove_label_matches(label_names))
+					.collect(),
+				aggregation,
+			},
+			Node::Negation(n) => Node::Negation(Box::new(n.remove_label_matches(label_names))),
+		}
+	}
+
+	pub fn into_vector(self) -> Option<Vector> {
+		if let Node::Vector(x) = self {
+			Some(x)
+		} else {
+			None
+		}
+	}
 }
 
 impl fmt::Display for Node {
