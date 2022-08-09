@@ -461,6 +461,37 @@ impl Node {
 			.filter(|l| l.name != "__name__")
 	}
 
+	pub fn add_label_matches(self, label_matches: Vec<LabelMatch>) -> Self {
+		match self {
+			Node::Operator { x, op, y } => Node::Operator {
+				x: Box::new(x.add_label_matches(label_matches.clone())),
+				y: Box::new(y.add_label_matches(label_matches)),
+				op,
+			},
+			Node::Vector(mut v) => {
+				for lm in label_matches {
+					v.labels.push(lm);
+				}
+				Node::Vector(v)
+			}
+			Node::Scalar(s) => Node::Scalar(s),
+			Node::String(s) => Node::String(s),
+			Node::Function {
+				name,
+				args,
+				aggregation,
+			} => Node::Function {
+				name,
+				args: args
+					.into_iter()
+					.map(|x| x.add_label_matches(label_matches.clone()))
+					.collect(),
+				aggregation,
+			},
+			Node::Negation(n) => Node::Negation(Box::new(n.add_label_matches(label_matches))),
+		}
+	}
+
 	pub fn remove_label_matches(self, label_names: &[&str]) -> Self {
 		match self {
 			Node::Operator { x, op, y } => Node::Operator {
