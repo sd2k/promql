@@ -226,23 +226,22 @@ impl fmt::Display for Vector {
 			write!(f, "{}", name)?;
 			named = true;
 		}
-		if named && self.labels.len() == 1 {
-			return Ok(());
-		}
-		write!(f, "{{")?;
-		let labels = self
-			.labels
-			.iter()
-			.filter(|label_match| label_match.name != NAME)
-			.enumerate();
-		for (i, label) in labels {
-			if i == 0 {
-				write!(f, "{}", label)?;
-			} else {
-				write!(f, ", {}", label)?;
+		if named && self.labels.len() != 1 {
+			write!(f, "{{")?;
+			let labels = self
+				.labels
+				.iter()
+				.filter(|label_match| label_match.name != NAME)
+				.enumerate();
+			for (i, label) in labels {
+				if i == 0 {
+					write!(f, "{}", label)?;
+				} else {
+					write!(f, ", {}", label)?;
+				}
 			}
+			write!(f, "}}")?;
 		}
-		write!(f, "}}")?;
 		if let Some(range) = self.range {
 			write!(f, "[{}]", TimeDuration(range))?;
 		}
