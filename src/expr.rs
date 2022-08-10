@@ -312,6 +312,17 @@ impl Node {
 		Node::Negation(Box::new(x))
 	}
 
+	pub fn without_comparisons(&self) -> Box<dyn Iterator<Item = Node>> {
+		match self {
+			Node::Vector(_) | Node::Function { .. } => Box::new(iter::once(self.clone())),
+			Node::String(_) | Node::Scalar(_) => Box::new(iter::empty()),
+			Node::Negation(x) => Box::new(iter::once(*x.clone())),
+			Node::Operator { x, y, .. } => {
+				Box::new(x.without_comparisons().chain(y.without_comparisons()))
+			}
+		}
+	}
+
 	/**
 	Return an iterator of series names present in this node.
 
@@ -1558,5 +1569,55 @@ mod tests {
 
 			let _ = expression(0, format!("a {} b", op).as_str(), opts);
 		}
+	}
+
+	#[test]
+	fn without_conditions() {
+		assert_eq!(
+			crate::parse("a > 1", Default::default())
+				.unwrap()
+				.without_comparisons()
+				.map(|x| x.to_string())
+				.collect::<Vec<_>>(),
+			vec!["a".to_string()],
+		);
+		assert_eq!(
+			crate::parse("sum(rate(a[5m])) > 0.95", Default::default())
+				.unwrap()
+				.without_comparisons()
+				.map(|x| x.to_string())
+				.collect::<Vec<_>>(),
+			vec!["sum(rate(a[5m]))".to_string()],
+		);
+		assert_eq!(
+			crate::parse(
+				"sum(rate(a[5m])) < 0 or something_else > 100",
+				Default::default()
+			)
+			.unwrap()
+			.without_comparisons()
+			.map(|x| x.to_string())
+			.collect::<Vec<_>>(),
+			vec!["sum(rate(a[5m]))".to_string(), "something_else".to_string()],
+		);
+		assert_eq!(
+			crate::parse(
+				"sum(rate(a[5m])) < ignoring (some_label) something_else",
+				Default::default()
+			)
+			.unwrap()
+			.without_comparisons()
+			.map(|x| x.to_string())
+			.collect::<Vec<_>>(),
+			vec!["sum(rate(a[5m]))".to_string(), "something_else".to_string()],
+		);
+		assert_eq!(
+			crate::parse("sum(a > 1)", Default::default())
+				.unwrap()
+				.without_comparisons()
+				.map(|x| x.to_string())
+				.collect::<Vec<_>>(),
+			vec!["sum(a > 1)".to_string()],
+		);
 	}
 }
