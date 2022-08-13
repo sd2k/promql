@@ -223,10 +223,10 @@ impl fmt::Display for Vector {
 		if let Some(name) = self.labels.iter().find_map(|label_match| {
 			(label_match.name == NAME).then(|| String::from_utf8_lossy(&label_match.value))
 		}) {
-			write!(f, "{}", name)?;
 			named = true;
+			write!(f, "{}", name)?;
 		}
-		if named && self.labels.len() != 1 {
+		if self.labels.len() > named as usize {
 			write!(f, "{{")?;
 			let labels = self
 				.labels
@@ -917,6 +917,8 @@ and ignoring (instance)
 sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100"#,
 				r#"sum(1 - something_used{env="production"} / something_total) by (instance) and ignoring (instance) sum(rate(some_queries{instance=~"localhost\\d+"}[5m])) > 100"#,
 			),
+			(r#"{foo="a"}"#, r#"{foo="a"}"#),
+			(r#"{foo="a", bar="b"}"#, r#"{foo="a", bar="b"}"#),
 		] {
 			let node = parse(query, Default::default()).unwrap();
 			assert_eq!(
