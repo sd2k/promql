@@ -149,16 +149,20 @@ impl Vector {
 	}
 
 	pub fn with_name(self, name: String) -> Self {
-		let name = name.into_bytes();
+		self.with_matcher(LabelMatch {
+			name: NAME.to_string(),
+			op: LabelMatchOp::Eq,
+			value: name.into_bytes(),
+		})
+	}
+
+	pub fn with_matcher(self, label_match: LabelMatch) -> Self {
 		let mut labels = self.labels.clone();
-		if let Some(n) = labels.iter_mut().find(|l| l.name == NAME) {
-			n.value = name;
+		if let Some(n) = labels.iter_mut().find(|l| l.name == label_match.name) {
+			n.op = label_match.op;
+			n.value = label_match.value;
 		} else {
-			labels.push(LabelMatch {
-				name: NAME.to_string(),
-				op: LabelMatchOp::Eq,
-				value: name,
-			});
+			labels.push(label_match);
 		}
 		Self { labels, ..self }
 	}
