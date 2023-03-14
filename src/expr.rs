@@ -528,11 +528,8 @@ impl Node {
 				op,
 			},
 			Node::Vector(mut v) => {
-				v.labels = v
-					.labels
-					.into_iter()
-					.filter(|lm| !label_names.contains(&lm.name.as_str()))
-					.collect();
+				v.labels
+					.retain(|lm| !label_names.contains(&lm.name.as_str()));
 				Node::Vector(v)
 			}
 			Node::Scalar(s) => Node::Scalar(s),

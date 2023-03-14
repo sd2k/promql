@@ -931,7 +931,7 @@ sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100"#,
 				"\n\n{}\n\nshould format to\n\n{}, got\n\n{}\n\n",
 				query,
 				expected,
-				node.to_string(),
+				node,
 			);
 		}
 	}
