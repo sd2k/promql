@@ -489,6 +489,23 @@ impl Node {
 			.filter(|l| l.name != "__name__")
 	}
 
+	/**
+	Add a set of label matches to all vectors in this node.
+
+	```
+	# use promql::{LabelMatch, LabelMatchOp};
+	let query = r#"sum(rate(some_queries{instance=~"localhost\\d+"}[5m])) > 100"#;
+	let node = promql::parse(query, Default::default()).unwrap();
+	assert_eq!(
+		node.add_label_matches(vec![LabelMatch {
+			name: "code".to_string(),
+			op: LabelMatchOp::Eq,
+			value: b"200".to_vec(),
+		}]).to_string(),
+		r#"sum(rate(some_queries{instance=~"localhost\\d+", code="200"}[5m])) > 100"#.to_string(),
+	);
+	```
+	*/
 	pub fn add_label_matches(self, label_matches: Vec<LabelMatch>) -> Self {
 		match self {
 			Node::Operator { x, op, y } => Node::Operator {
@@ -520,6 +537,19 @@ impl Node {
 		}
 	}
 
+	/**
+	Remove a set of label matches from all vectors in this node.
+
+	```
+	# use promql::{LabelMatch, LabelMatchOp};
+	let query = r#"sum(rate(some_queries{instance=~"localhost\\d+", code="200"}[5m])) > 100"#;
+	let node = promql::parse(query, Default::default()).unwrap();
+	assert_eq!(
+		node.remove_label_matches(&["code"]).to_string(),
+		r#"sum(rate(some_queries{instance=~"localhost\\d+"}[5m])) > 100"#.to_string(),
+	);
+	```
+	*/
 	pub fn remove_label_matches(self, label_names: &[&str]) -> Self {
 		match self {
 			Node::Operator { x, op, y } => Node::Operator {
