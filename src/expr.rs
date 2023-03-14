@@ -312,6 +312,22 @@ impl Node {
 		Node::Negation(Box::new(x))
 	}
 
+	/**
+	Return an iterator of subnodes in this node with operators removed.
+
+	This will recurse into each operand of any operator and return the nodes
+	of those operands, _also_ with any comparisons removed.
+
+	```
+	let query = "sum(rate(a[5m])) < ignoring (some_label) something_else";
+	let node = promql::parse(query, Default::default()).unwrap();
+	let without_comparisons: Vec<_> = node
+		.without_comparisons()
+		.map(|x| x.to_string())
+		.collect();
+	assert_eq!(without_comparisons, vec!["sum(rate(a[5m]))".to_string(), "something_else".to_string()]);
+	```
+	*/
 	pub fn without_comparisons(&self) -> Box<dyn Iterator<Item = Node>> {
 		match self {
 			Node::Vector(_) | Node::Function { .. } | Node::Negation(_) => {
@@ -1573,7 +1589,7 @@ mod tests {
 	}
 
 	#[test]
-	fn without_conditions() {
+	fn without_comparisons() {
 		assert_eq!(
 			crate::parse("a > 1", Default::default())
 				.unwrap()
