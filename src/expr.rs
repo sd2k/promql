@@ -594,7 +594,7 @@ impl fmt::Display for Node {
 		match self {
 			Self::Vector(v) => write!(f, "{}", v),
 			Self::Scalar(lit) => write!(f, "{}", lit),
-			Self::String(lit) => write!(f, "{}", String::from_utf8_lossy(lit)),
+			Self::String(lit) => write!(f, "\"{}\"", String::from_utf8_lossy(lit)),
 			Self::Negation(node) => write!(f, "-{}", node),
 			Self::Function {
 				name,

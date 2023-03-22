@@ -923,6 +923,10 @@ sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100"#,
 			),
 			(r#"{foo="a"}"#, r#"{foo="a"}"#),
 			(r#"{foo="a", bar="b"}"#, r#"{foo="a", bar="b"}"#),
+			(
+				r#"label_replace(node_load1, "instance", "$1", "job")"#,
+				r#"label_replace(node_load1, "instance", "$1", "job")"#,
+			),
 		] {
 			let node = parse(query, Default::default()).unwrap();
 			assert_eq!(
