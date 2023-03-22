@@ -350,7 +350,7 @@ impl Node {
 	let query = r#"
 		sum(1 - something_used{env="production"} / something_total) by (instance)
 		and ignoring (instance)
-		sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100
+		sum(rate(some_series{instance=~"localhost\\d+"} [5m])) > 100
 	"#;
 	let ast = promql::parse(query, opts).expect("valid query");
 	let series: Vec<String> = ast.series_names().collect(); assert_eq!(
@@ -358,7 +358,7 @@ impl Node {
 		vec![
 			"something_used".to_string(),
 			"something_total".to_string(),
-			"some_queries".to_string(),
+			"some_series".to_string(),
 		],
 	);
 	```
@@ -385,7 +385,7 @@ impl Node {
 	let query = r#"
 		sum(1 - something_used{env="production"} / something_total) by (instance)
 		and ignoring (instance)
-		sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100
+		sum(rate(some_series{instance=~"localhost\\d+"} [5m])) > 100
 	"#;
 	let ast = promql::parse(query, opts).expect("valid query");
 	let vectors: Vec<&Vector> = ast.vectors().collect();
@@ -424,7 +424,7 @@ impl Node {
 					LabelMatch {
 						name: "__name__".to_string(),
 						op: LabelMatchOp::Eq,
-						value: b"some_queries".to_vec(),
+						value: b"some_series".to_vec(),
 					},
 					LabelMatch {
 						name: "instance".to_string(),
@@ -462,7 +462,7 @@ impl Node {
 	let query = r#"
 		sum(1 - something_used{env="production"} / something_total) by (instance)
 		and ignoring (instance)
-		sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100
+		sum(rate(some_series{instance=~"localhost\\d+"} [5m])) > 100
 	"#;
 	let ast = promql::parse(query, opts).expect("valid query");
 	let label_matches: Vec<&LabelMatch> = ast.label_matches().collect();
@@ -502,8 +502,8 @@ impl Node {
 	# Example
 
 	```
-	# use promql::{LabelMatch, LabelMatchOp};
-	let query = r#"sum(rate(some_queries{instance=~"localhost\\d+"}[5m])) > 100"#;
+	use promql::{LabelMatch, LabelMatchOp};
+	let query = r#"sum(rate(some_series{instance=~"localhost\\d+"}[5m])) > 100"#;
 	let node = promql::parse(query, Default::default()).unwrap();
 	assert_eq!(
 		node.add_label_matches(vec![LabelMatch {
@@ -625,13 +625,15 @@ impl Node {
 	/**
 	Remove a set of label matches from all vectors in this node.
 
+	# Example
+
 	```
 	# use promql::{LabelMatch, LabelMatchOp};
-	let query = r#"sum(rate(some_queries{instance=~"localhost\\d+", code="200"}[5m])) > 100"#;
+	let query = r#"sum(rate(some_series{instance=~"localhost\\d+", code="200"}[5m])) > 100"#;
 	let node = promql::parse(query, Default::default()).unwrap();
 	assert_eq!(
 		node.remove_label_matches(&["code"]).to_string(),
-		r#"sum(rate(some_queries{instance=~"localhost\\d+"}[5m])) > 100"#.to_string(),
+		r#"sum(rate(some_series{instance=~"localhost\\d+"}[5m])) > 100"#.to_string(),
 	);
 	```
 	*/
