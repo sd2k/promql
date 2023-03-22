@@ -492,6 +492,15 @@ impl Node {
 	/**
 	Add a set of label matches to all vectors in this node.
 
+	Note: if any subnodes represent a `label_replace` function, no labels
+	matching the `dst_label` argument of that function will _not_ be added
+	to the label matches, unless `dst_label` is equal to `src_label`.
+	This is because the `dst_label` may not actually exist in the series,
+	and adding it would cause the query to return no results.
+	See the concrete example below.
+
+	# Example
+
 	```
 	# use promql::{LabelMatch, LabelMatchOp};
 	let query = r#"sum(rate(some_queries{instance=~"localhost\\d+"}[5m])) > 100"#;
@@ -502,7 +511,51 @@ impl Node {
 			op: LabelMatchOp::Eq,
 			value: b"200".to_vec(),
 		}]).to_string(),
-		r#"sum(rate(some_queries{instance=~"localhost\\d+", code="200"}[5m])) > 100"#.to_string(),
+		r#"sum(rate(some_series{instance=~"localhost\\d+", code="200"}[5m])) > 100"#.to_string(),
+	);
+	```
+
+	# `label_replace` handling
+
+	Note we don't add replaced label matches to vectors inside `label_replace`,
+	unless `dst_label` is equal to `src_label`.
+
+	```
+	use promql::{LabelMatch, LabelMatchOp};
+	let query = r#"sum (label_replace(some_series{instance=~"localhost:[0-9]+"}[5m], "port", "$1", "instance", ".+:([0-9]+)")) by (port)  > 100"#;
+	let node = promql::parse(query, Default::default()).unwrap();
+	assert_eq!(
+		node.add_label_matches(vec![
+			LabelMatch {
+				name: "code".to_string(),
+				op: LabelMatchOp::Eq,
+				value: b"200".to_vec(),
+			},
+			LabelMatch {
+				name: "port".to_string(),
+				op: LabelMatchOp::Eq,
+				value: b"8000".to_vec(),
+			},
+		]).to_string(),
+		r#"sum(label_replace(some_series{instance=~"localhost:[0-9]+", code="200"}[5m], "port", "$1", "instance", ".+:([0-9]+)")) by (port) > 100"#.to_string(),
+	);
+
+	let query = r#"sum (label_replace(some_series[5m], "instance", ".+$1", "instance", ".+:([0-9]+)")) by (port)  > 100"#;
+	let node = promql::parse(query, Default::default()).unwrap();
+	assert_eq!(
+		node.add_label_matches(vec![
+			LabelMatch {
+				name: "code".to_string(),
+				op: LabelMatchOp::Eq,
+				value: b"200".to_vec(),
+			},
+			LabelMatch {
+				name: "instance".to_string(),
+				op: LabelMatchOp::REq,
+				value: b".+:80..".to_vec(),
+			},
+		]).to_string(),
+		r#"sum(label_replace(some_series{code="200", instance=~".+:80.."}[5m], "instance", ".+$1", "instance", ".+:([0-9]+)")) by (port) > 100"#.to_string(),
 	);
 	```
 	*/
@@ -521,6 +574,38 @@ impl Node {
 			}
 			Node::Scalar(s) => Node::Scalar(s),
 			Node::String(s) => Node::String(s),
+			Node::Function {
+				name,
+				args,
+				aggregation,
+			} if name.as_str().to_lowercase().trim() == "label_replace" => {
+				let new_args = if let [_, Node::String(dst_label), _, Node::String(src_label), _] =
+					&args.clone()[..]
+				{
+					args.into_iter()
+						.map(|x| {
+							x.add_label_matches(
+								label_matches
+									.iter()
+									.cloned()
+									.filter(|x| {
+										x.name.as_bytes() != dst_label || dst_label == src_label
+									})
+									.collect(),
+							)
+						})
+						.collect()
+				} else {
+					args.into_iter()
+						.map(|x| x.add_label_matches(label_matches.clone()))
+						.collect()
+				};
+				Node::Function {
+					name,
+					args: new_args,
+					aggregation,
+				}
+			}
 			Node::Function {
 				name,
 				args,
