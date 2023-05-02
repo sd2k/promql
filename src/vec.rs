@@ -250,7 +250,7 @@ impl fmt::Display for Vector {
 			write!(f, "[{}]", TimeDuration(range))?;
 		}
 		if let Some(offset) = self.offset {
-			write!(f, " offset [{}]", TimeDuration(offset))?;
+			write!(f, " offset {}", TimeDuration(offset))?;
 		}
 		Ok(())
 	}
@@ -927,6 +927,7 @@ sum(rate(some_queries{instance=~"localhost\\d+"} [5m])) > 100"#,
 				r#"label_replace(node_load1, "instance", "$1", "job")"#,
 				r#"label_replace(node_load1, "instance", "$1", "job")"#,
 			),
+			("node_load1 offset 10m", "node_load1 offset 10m"),
 		] {
 			let node = parse(query, Default::default()).unwrap();
 			assert_eq!(
