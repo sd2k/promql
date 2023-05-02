@@ -154,7 +154,7 @@ where
 		self.labels
 			.iter()
 			.find_map(|l| {
-				(l.name == NAME).then(|| {
+				(&l.name == NAME).then(|| {
 					// This should never really fail because Prometheus requires
 					// metric names to be valid UTF8, but we can avoid using
 					// unsafe by just transposing and flattening the option.
@@ -201,7 +201,7 @@ where
 		let name = func(
 			self.labels
 				.iter()
-				.find_map(|l| (l.name == NAME).then(|| std::str::from_utf8(l.value.as_ref()).ok()))
+				.find_map(|l| (&l.name == NAME).then(|| std::str::from_utf8(l.value.as_ref()).ok()))
 				.flatten(),
 		);
 		self.with_name(name)
@@ -219,7 +219,7 @@ where
 			labels: self
 				.labels
 				.into_iter()
-				.filter(|x| x.name != label.as_ref())
+				.filter(|x| &x.name != label.as_ref())
 				.collect(),
 			..self
 		}
@@ -264,7 +264,7 @@ where
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		let mut named = false;
 		if let Some(name) = self.labels.iter().find_map(|label_match| {
-			(label_match.name == NAME).then(|| String::from_utf8_lossy(label_match.value.as_ref()))
+			(&label_match.name == NAME).then(|| String::from_utf8_lossy(label_match.value.as_ref()))
 		}) {
 			named = true;
 			write!(f, "{}", name)?;
@@ -274,7 +274,7 @@ where
 			let labels = self
 				.labels
 				.iter()
-				.filter(|label_match| label_match.name != NAME)
+				.filter(|label_match| &label_match.name != NAME)
 				.enumerate();
 			for (i, label) in labels {
 				if i == 0 {

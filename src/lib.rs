@@ -224,7 +224,7 @@ pub trait Stringy:
 	+ Eq
 	+ PartialOrd
 	+ Ord
-	+ for<'a> PartialEq<&'a str>
+	+ PartialEq<str>
 {
 	fn from_str(s: &str) -> Self;
 	fn from_utf8(bytes: &[u8]) -> Result<Self, Utf8Error>;

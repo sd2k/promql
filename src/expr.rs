@@ -387,7 +387,7 @@ where
 	pub fn series_names(&self) -> impl Iterator<Item = String> + '_ {
 		self.vectors().filter_map(|x| {
 			x.labels.iter().find_map(|x| {
-				(x.name == "__name__").then(|| {
+				(&x.name == "__name__").then(|| {
 					String::from_utf8(x.value.as_ref().to_owned())
 						.expect("series names should always be valid utf8")
 				})
@@ -507,7 +507,7 @@ where
 	pub fn label_matches(&self) -> impl Iterator<Item = &LabelMatch<N, V>> {
 		self.vectors()
 			.flat_map(|v| v.labels.iter())
-			.filter(|l| l.name != "__name__")
+			.filter(|l| &l.name != "__name__")
 	}
 
 	/**
