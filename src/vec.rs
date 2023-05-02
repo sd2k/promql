@@ -166,11 +166,15 @@ where
 			.flatten()
 	}
 
-	pub fn with_name(self, name: V) -> Self {
+	/// Add a __name__ matcher to the vector.
+	///
+	/// Because Prometheus requires metric names to be valid UTF8, this function
+	/// takes a `Stringy` type, which is guaranteed to be a valid name.
+	pub fn with_name<Name: Stringy>(self, name: Name) -> Self {
 		self.with_matcher(LabelMatch {
 			name: N::from_str(NAME),
 			op: LabelMatchOp::Eq,
-			value: name,
+			value: V::from_str(name.as_ref()),
 		})
 	}
 
@@ -185,9 +189,14 @@ where
 		Self { labels, ..self }
 	}
 
-	pub fn renamed<F>(self, func: F) -> Self
+	/// Renames the vector to the given name.
+	///
+	/// Because Prometheus requires metric names to be valid UTF8, this function
+	/// takes a closure that must return a `Stringy` type, which is guaranteed
+	/// to be a valid name.
+	pub fn renamed<F, Name: Stringy>(self, func: F) -> Self
 	where
-		F: Fn(Option<&str>) -> V,
+		F: Fn(Option<&str>) -> Name,
 	{
 		let name = func(
 			self.labels
