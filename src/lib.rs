@@ -87,6 +87,11 @@ pub(crate) mod time_duration;
 pub(crate) mod utils;
 pub(crate) mod vec;
 
+use std::{
+	borrow::Cow,
+	fmt::{Debug, Display},
+};
+
 pub use expr::*;
 pub use vec::*;
 
@@ -141,13 +146,16 @@ impl Default for ParserOptions {
 }
 
 /// Parse expression string into an AST.
-pub fn parse<I, C>(e: I, opts: ParserOptions) -> Result<Node, nom::Err<VerboseError<I>>>
+pub fn parse<I, C>(
+	e: I,
+	opts: ParserOptions,
+) -> Result<Node<String, Vec<u8>>, nom::Err<VerboseError<I>>>
 where
 	I: Clone
 		+ Copy
 		+ nom::AsBytes
 		+ nom::Compare<&'static str>
-		+ for<'a> nom::Compare<&'a [u8]>
+		+ for<'u> nom::Compare<&'u [u8]>
 		+ nom::InputIter<Item = C>
 		+ nom::InputLength
 		+ nom::InputTake
@@ -161,9 +169,107 @@ where
 	&'static str: nom::FindToken<C>,
 	<I as nom::InputIter>::IterElem: Clone,
 {
+	parse_custom::<String, Vec<u8>, _, _>(e, opts)
+}
+
+pub fn parse_custom<N, V, I, C>(
+	e: I,
+	opts: ParserOptions,
+) -> Result<Node<N, V>, nom::Err<VerboseError<I>>>
+where
+	I: Clone
+		+ Copy
+		+ nom::AsBytes
+		+ nom::Compare<&'static str>
+		+ for<'u> nom::Compare<&'u [u8]>
+		+ nom::InputIter<Item = C>
+		+ nom::InputLength
+		+ nom::InputTake
+		+ nom::InputTakeAtPosition<Item = C>
+		+ nom::Offset
+		+ nom::Slice<std::ops::Range<usize>>
+		+ nom::Slice<std::ops::RangeFrom<usize>>
+		+ nom::Slice<std::ops::RangeTo<usize>>
+		+ nom::ParseTo<f32>,
+	C: nom::AsChar + Clone + Copy,
+	&'static str: nom::FindToken<C>,
+	<I as nom::InputIter>::IterElem: Clone,
+	N: Stringy + 'static,
+	V: Bytesy + 'static,
+{
 	match nom::combinator::all_consuming(|i| expression(0, i, opts))(e) {
 		Ok((_, ast)) => Ok(ast),
 		Err(e) => Err(e),
+	}
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Utf8Error;
+
+impl std::fmt::Display for Utf8Error {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+		write!(f, "invalid UTF-8")
+	}
+}
+
+impl std::error::Error for Utf8Error {}
+
+pub trait Stringy:
+	AsRef<str>
+	+ Clone
+	+ Debug
+	+ Display
+	+ std::hash::Hash
+	+ PartialEq
+	+ Eq
+	+ PartialOrd
+	+ Ord
+	+ for<'a> PartialEq<&'a str>
+{
+	fn from_str(s: &str) -> Self;
+	fn from_utf8(bytes: &[u8]) -> Result<Self, Utf8Error>;
+	fn from_utf8_lossy(bytes: &[u8]) -> Cow<'_, str>;
+	fn replace(&self, from: &str, to: &str) -> String;
+}
+
+pub trait Bytesy:
+	AsRef<[u8]> + Clone + Debug + std::hash::Hash + PartialEq + Eq + PartialOrd + Ord
+{
+	fn from_bytes(s: &[u8]) -> Self;
+	fn from_str(s: &str) -> Self {
+		Self::from_bytes(s.as_bytes())
+	}
+
+	fn concat(s: &[Self]) -> Self {
+		let mut out = Vec::new();
+		for b in s {
+			out.extend_from_slice(b.as_ref());
+		}
+		Self::from_bytes(out.as_ref())
+	}
+}
+
+impl Stringy for String {
+	fn from_str(s: &str) -> Self {
+		s.to_owned()
+	}
+
+	fn from_utf8(bytes: &[u8]) -> Result<Self, Utf8Error> {
+		String::from_utf8(bytes.to_owned()).map_err(|_| Utf8Error)
+	}
+
+	fn from_utf8_lossy(bytes: &[u8]) -> Cow<'_, str> {
+		String::from_utf8_lossy(bytes)
+	}
+
+	fn replace(&self, from: &str, to: &str) -> String {
+		str::replace(self, from, to)
+	}
+}
+
+impl Bytesy for Vec<u8> {
+	fn from_bytes(s: &[u8]) -> Self {
+		s.to_owned()
 	}
 }
 

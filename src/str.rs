@@ -1,4 +1,5 @@
 use crate::utils::IResult;
+use crate::Bytesy;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, take};
 use nom::character::complete::char;
@@ -43,37 +44,41 @@ macro_rules! fixed_length_radix {
 }
 
 // go does not allow invalid unicode scalars (surrogates, chars beyond U+10ffff), and the same applies to from_u32()
-fn validate_unicode_scalar(n: u32) -> Option<Vec<u8>> {
+fn validate_unicode_scalar<V>(n: u32) -> Option<V>
+where
+	V: Bytesy,
+{
 	::std::char::from_u32(n).map(|c| {
 		let mut tmp = [0; 4];
-		c.encode_utf8(&mut tmp).as_bytes().to_vec()
+		V::from_bytes(c.encode_utf8(&mut tmp).as_bytes())
 	})
 }
 
-fn rune<I, C>(input: I) -> IResult<I, Vec<u8>>
+fn rune<V, I, C>(input: I) -> IResult<I, V>
 where
 	I: Clone + AsBytes + InputIter<Item = C> + InputTake + Slice<RangeFrom<usize>>,
 	C: AsChar,
+	V: Bytesy,
 {
 	preceded(
 		char('\\'),
 		alt((
 			// not using value() here to avoid allocation of lots of temporary Vec *per rune() call*
-			map(char('a'), |_| vec![0x07]),
-			map(char('b'), |_| vec![0x08]),
-			map(char('f'), |_| vec![0x0c]),
-			map(char('n'), |_| vec![0x0a]),
-			map(char('r'), |_| vec![0x0d]),
-			map(char('t'), |_| vec![0x09]),
-			map(char('v'), |_| vec![0x0b]),
+			map(char('a'), |_| V::from_bytes(&[0x07])),
+			map(char('b'), |_| V::from_bytes(&[0x08])),
+			map(char('f'), |_| V::from_bytes(&[0x0c])),
+			map(char('n'), |_| V::from_bytes(&[0x0a])),
+			map(char('r'), |_| V::from_bytes(&[0x0d])),
+			map(char('t'), |_| V::from_bytes(&[0x09])),
+			map(char('v'), |_| V::from_bytes(&[0x0b])),
 			// TODO? should we really care whether \' is used in ""-strings or vice versa? (Prometheus itself does…)
-			map(char('\\'), |_| vec![0x5c]),
-			map(char('\''), |_| vec![0x27]),
-			map(char('"'), |_| vec![0x22]),
-			map(fixed_length_radix!(I, u8, 3u8, 8), |n| vec![n]),
+			map(char('\\'), |_| V::from_bytes(&[0x5c])),
+			map(char('\''), |_| V::from_bytes(&[0x27])),
+			map(char('"'), |_| V::from_bytes(&[0x22])),
+			map(fixed_length_radix!(I, u8, 3u8, 8), |n| V::from_bytes(&[n])),
 			map(
 				preceded(char('x'), fixed_length_radix!(I, u8, 2u8, 16)),
-				|n| vec![n],
+				|n| V::from_bytes(&[n]),
 			),
 			map_opt(
 				preceded(char('u'), fixed_length_radix!(I, u32, 4u8, 16)),
@@ -89,7 +94,7 @@ where
 
 // parses sequence of chars that are not in arg
 // returns Vec<u8> (unlike none_of!() which returns &[char], or is_not!() which returns &[u8])
-fn is_not_v<I, C>(arg: &'static str) -> impl FnMut(I) -> IResult<I, Vec<u8>>
+fn is_not_v<I, C, V>(arg: &'static str) -> impl FnMut(I) -> IResult<I, V>
 where
 	I: Clone
 		+ AsBytes
@@ -98,12 +103,13 @@ where
 		+ InputTake
 		+ InputTakeAtPosition<Item = C>,
 	&'static str: FindToken<C>,
+	V: Bytesy,
 {
-	map(is_not(arg), |bytes: I| bytes.as_bytes().to_vec())
+	map(is_not(arg), |bytes: I| V::from_bytes(bytes.as_bytes()))
 }
 
 // sequence of chars (except those marked as invalid in $arg) or rune literals, parsed into Vec<u8>
-fn chars_except<I, C>(arg: &'static str) -> impl FnMut(I) -> IResult<I, Vec<u8>>
+fn chars_except<I, C, V>(arg: &'static str) -> impl FnMut(I) -> IResult<I, V>
 where
 	I: Clone
 		+ AsBytes
@@ -114,12 +120,15 @@ where
 		+ Slice<RangeFrom<usize>>,
 	C: AsChar,
 	&'static str: FindToken<C>,
+	V: Bytesy,
 {
-	map(many0(alt((rune, is_not_v(arg)))), |s| s.concat())
+	map(many0(alt((rune::<V, I, C>, is_not_v(arg)))), |s| {
+		V::concat(&s)
+	})
 }
 
 // Go and PromQL allow arbitrary byte sequences, hence Vec<u8> instead of String
-pub fn string<I, C>(input: I) -> IResult<I, Vec<u8>>
+pub fn string<V, I, C>(input: I) -> IResult<I, V>
 where
 	I: Clone
 		+ AsBytes
@@ -130,6 +139,7 @@ where
 		+ Slice<RangeFrom<usize>>,
 	C: AsChar,
 	&'static str: FindToken<C>,
+	V: Bytesy,
 {
 	alt((
 		// newlines are not allowed in interpreted quotes, but are totally fine in raw string literals
@@ -171,7 +181,7 @@ mod tests {
 		// literal, non-escaped newlines
 
 		assert_eq!(
-			string(cbs("'this\nis not valid'")),
+			string::<Vec<u8>, _, _>(cbs("'this\nis not valid'")),
 			err(vec![
 				(cbs("'this\nis not valid'"), VerboseErrorKind::Char('`'),),
 				(
@@ -200,7 +210,7 @@ mod tests {
 
 		// high surrogate
 		assert_eq!(
-			rune(cbs("\\uD801")),
+			rune::<Vec<u8>, _, _>(cbs("\\uD801")),
 			err(vec![
 				(cbs("uD801"), VerboseErrorKind::Char('U')),
 				(cbs("uD801"), VerboseErrorKind::Nom(ErrorKind::Alt)),
@@ -214,7 +224,7 @@ mod tests {
 
 		// out of range
 		assert_eq!(
-			rune(cbs("\\UdeadDEAD")),
+			rune::<Vec<u8>, _, _>(cbs("\\UdeadDEAD")),
 			err(vec![
 				(cbs("UdeadDEAD"), VerboseErrorKind::Nom(ErrorKind::MapOpt)),
 				(cbs("UdeadDEAD"), VerboseErrorKind::Nom(ErrorKind::Alt)),
@@ -224,7 +234,7 @@ mod tests {
 		// utter nonsense
 
 		assert_eq!(
-			rune(cbs("\\xxx")),
+			rune::<Vec<u8>, _, _>(cbs("\\xxx")),
 			err(vec![
 				(cbs("xxx"), VerboseErrorKind::Char('U')),
 				(cbs("xxx"), VerboseErrorKind::Nom(ErrorKind::Alt)),
@@ -232,7 +242,7 @@ mod tests {
 		);
 
 		assert_eq!(
-			rune(cbs("\\x1")),
+			rune::<Vec<u8>, _, _>(cbs("\\x1")),
 			err(vec![
 				(cbs("x1"), VerboseErrorKind::Char('U')),
 				(cbs("x1"), VerboseErrorKind::Nom(ErrorKind::Alt)),

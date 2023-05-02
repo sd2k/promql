@@ -21,7 +21,7 @@ use nom::{
 use crate::str::string;
 use crate::utils::{delimited_ws, value, IResult};
 use crate::vec::{label_name, vector, Vector};
-use crate::{tuple_separated, LabelMatch, ParserOptions};
+use crate::{tuple_separated, Bytesy, LabelMatch, ParserOptions, Stringy};
 
 /// PromQL operators
 #[derive(Clone, Debug, PartialEq, Hash)]
@@ -205,18 +205,22 @@ impl fmt::Display for AggregationMod {
 
 /// AST node.
 #[derive(Clone, Debug)]
-pub enum Node {
+pub enum Node<N = String, V = Vec<u8>>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	/// Operator: `a + ignoring (foo) b`
 	Operator {
 		/// First operand.
-		x: Box<Node>,
+		x: Box<Node<N, V>>,
 		/// Operator itself.
 		op: Op,
 		/// Second operand.
-		y: Box<Node>,
+		y: Box<Node<N, V>>,
 	},
 	/// Time series vector.
-	Vector(Vector),
+	Vector(Vector<N, V>),
 	/// Floating point number.
 	Scalar(f32),
 	/// String literal.
@@ -226,15 +230,19 @@ pub enum Node {
 		// Function name.
 		name: String,
 		// Function arguments.
-		args: Vec<Node>,
+		args: Vec<Node<N, V>>,
 		// Aggregation operator modifiers (`by(…)`/`without(…)`).
 		aggregation: Option<AggregationMod>,
 	},
 	/// Unary negation, e.g. `-b` in `a + -b`
-	Negation(Box<Node>),
+	Negation(Box<Node<N, V>>),
 }
 
-impl Hash for Node {
+impl<N, V> Hash for Node<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
 		discriminant(self).hash(state);
 		match self {
@@ -260,7 +268,11 @@ impl Hash for Node {
 	}
 }
 
-impl PartialEq for Node {
+impl<N, V> PartialEq for Node<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	fn eq(&self, other: &Self) -> bool {
 		match (self, other) {
 			(
@@ -296,19 +308,28 @@ impl PartialEq for Node {
 	}
 }
 
-impl Eq for Node {}
+impl<N, V> Eq for Node<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
+}
 
-impl Node {
+impl<N, V> Node<N, V>
+where
+	N: Stringy + 'static,
+	V: Bytesy + 'static,
+{
 	// these functions are here primarily to avoid explicit mention of `Box::new()` in the code
 
-	fn operator(x: Node, op: Op, y: Node) -> Node {
+	fn operator(x: Node<N, V>, op: Op, y: Node<N, V>) -> Node<N, V> {
 		Node::Operator {
 			x: Box::new(x),
 			op,
 			y: Box::new(y),
 		}
 	}
-	fn negation(x: Node) -> Node {
+	fn negation(x: Node<N, V>) -> Node<N, V> {
 		Node::Negation(Box::new(x))
 	}
 
@@ -328,7 +349,7 @@ impl Node {
 	assert_eq!(without_comparisons, vec!["sum(rate(a[5m]))".to_string(), "something_else".to_string()]);
 	```
 	*/
-	pub fn without_comparisons(&self) -> Box<dyn Iterator<Item = Node>> {
+	pub fn without_comparisons(&self) -> Box<dyn Iterator<Item = Node<N, V>>> {
 		match self {
 			Node::Vector(_) | Node::Function { .. } | Node::Negation(_) => {
 				Box::new(iter::once(self.clone()))
@@ -367,7 +388,7 @@ impl Node {
 		self.vectors().filter_map(|x| {
 			x.labels.iter().find_map(|x| {
 				(x.name == "__name__").then(|| {
-					String::from_utf8(x.value.clone())
+					String::from_utf8(x.value.as_ref().to_owned())
 						.expect("series names should always be valid utf8")
 				})
 			})
@@ -439,7 +460,7 @@ impl Node {
 	);
 	```
 	*/
-	pub fn vectors(&self) -> Box<dyn Iterator<Item = &Vector> + '_> {
+	pub fn vectors(&self) -> Box<dyn Iterator<Item = &Vector<N, V>> + '_> {
 		match self {
 			Self::Operator { x, y, .. } => Box::new(x.vectors().chain(y.vectors())),
 			Self::Vector(v) => Box::new(iter::once(v)),
@@ -465,7 +486,7 @@ impl Node {
 		sum(rate(some_series{instance=~"localhost\\d+"} [5m])) > 100
 	"#;
 	let ast = promql::parse(query, opts).expect("valid query");
-	let label_matches: Vec<&LabelMatch> = ast.label_matches().collect();
+	let label_matches: Vec<&LabelMatch<_, _>> = ast.label_matches().collect();
 	assert_eq!(
 		label_matches,
 		vec![
@@ -483,7 +504,7 @@ impl Node {
 	);
 	```
 	*/
-	pub fn label_matches(&self) -> impl Iterator<Item = &LabelMatch> {
+	pub fn label_matches(&self) -> impl Iterator<Item = &LabelMatch<N, V>> {
 		self.vectors()
 			.flat_map(|v| v.labels.iter())
 			.filter(|l| l.name != "__name__")
@@ -559,7 +580,7 @@ impl Node {
 	);
 	```
 	*/
-	pub fn add_label_matches(self, label_matches: Vec<LabelMatch>) -> Self {
+	pub fn add_label_matches(self, label_matches: Vec<LabelMatch<N, V>>) -> Self {
 		match self {
 			Node::Operator { x, op, y } => Node::Operator {
 				x: Box::new(x.add_label_matches(label_matches.clone())),
@@ -589,7 +610,8 @@ impl Node {
 									.iter()
 									.cloned()
 									.filter(|x| {
-										x.name.as_bytes() != dst_label || dst_label == src_label
+										x.name.as_ref().as_bytes() != dst_label
+											|| dst_label == src_label
 									})
 									.collect(),
 							)
@@ -646,7 +668,7 @@ impl Node {
 			},
 			Node::Vector(mut v) => {
 				v.labels
-					.retain(|lm| !label_names.contains(&lm.name.as_str()));
+					.retain(|lm| !label_names.contains(&lm.name.as_ref()));
 				Node::Vector(v)
 			}
 			Node::Scalar(s) => Node::Scalar(s),
@@ -667,7 +689,7 @@ impl Node {
 		}
 	}
 
-	pub fn into_vector(self) -> Option<Vector> {
+	pub fn into_vector(self) -> Option<Vector<N, V>> {
 		if let Node::Vector(x) = self {
 			Some(x)
 		} else {
@@ -676,7 +698,11 @@ impl Node {
 	}
 }
 
-impl fmt::Display for Node {
+impl<N, V> fmt::Display for Node<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			Self::Vector(v) => write!(f, "{}", v),
@@ -760,7 +786,7 @@ where
 	delimited(ws_or_comment(opts), parser, ws_or_comment(opts))
 }
 
-fn label_list<I, C>(input: I, opts: ParserOptions) -> IResult<I, Vec<String>>
+fn label_list<I, C, N>(input: I, opts: ParserOptions) -> IResult<I, Vec<N>>
 where
 	I: Clone
 		+ AsBytes
@@ -775,10 +801,14 @@ where
 		+ Slice<RangeTo<usize>>,
 	C: AsChar + Clone,
 	&'static str: FindToken<C>,
+	N: Stringy,
 {
 	delimited_ws(
 		char('('),
-		separated_list0(surrounded_ws_or_comment(opts, char(',')), label_name),
+		separated_list0(
+			surrounded_ws_or_comment(opts, char(',')),
+			label_name::<I, C, N>,
+		),
 		char(')'),
 	)(input)
 }
@@ -815,16 +845,16 @@ where
 }
 
 // it's up to the library user to decide whether argument list is valid or not
-fn function_args<I, C>(
+fn function_args<I, C, N, V>(
 	recursion_level: usize,
 	opts: ParserOptions,
-) -> impl FnMut(I) -> IResult<I, Vec<Node>>
+) -> impl FnMut(I) -> IResult<I, Vec<Node<N, V>>>
 where
 	I: Clone
 		+ Copy
 		+ AsBytes
 		+ Compare<&'static str>
-		+ for<'a> Compare<&'a [u8]>
+		+ for<'u> Compare<&'u [u8]>
 		+ InputIter<Item = C>
 		+ InputLength
 		+ InputTake
@@ -838,6 +868,8 @@ where
 	C: AsChar + Clone + Copy,
 	&'static str: FindToken<C>,
 	<I as InputIter>::IterElem: Clone,
+	N: Stringy + 'static,
+	V: Bytesy + 'static,
 {
 	delimited_ws(
 		char('('),
@@ -861,13 +893,17 @@ macro_rules! pair_permutations {
 	};
 }
 
-fn function<I, C>(recursion_level: usize, input: I, opts: ParserOptions) -> IResult<I, Node>
+fn function<I, C, N, V>(
+	recursion_level: usize,
+	input: I,
+	opts: ParserOptions,
+) -> IResult<I, Node<N, V>>
 where
 	I: Clone
 		+ Copy
 		+ AsBytes
 		+ Compare<&'static str>
-		+ for<'a> Compare<&'a [u8]>
+		+ for<'u> Compare<&'u [u8]>
 		+ InputIter<Item = C>
 		+ InputLength
 		+ InputTake
@@ -880,6 +916,8 @@ where
 	C: AsChar + Clone + Copy,
 	&'static str: FindToken<C>,
 	<I as InputIter>::IterElem: Clone,
+	N: Stringy + 'static,
+	V: Bytesy + 'static,
 {
 	map(
 		tuple((
@@ -899,13 +937,13 @@ where
 	)(input)
 }
 
-fn atom<I, C>(recursion_level: usize, input: I, opts: ParserOptions) -> IResult<I, Node>
+fn atom<I, C, N, V>(recursion_level: usize, input: I, opts: ParserOptions) -> IResult<I, Node<N, V>>
 where
 	I: Clone
 		+ Copy
 		+ AsBytes
 		+ Compare<&'static str>
-		+ for<'a> Compare<&'a [u8]>
+		+ for<'u> Compare<&'u [u8]>
 		+ InputIter<Item = C>
 		+ InputLength
 		+ InputTake
@@ -918,6 +956,8 @@ where
 	C: AsChar + Clone + Copy,
 	&'static str: FindToken<C>,
 	<I as InputIter>::IterElem: Clone,
+	N: Stringy + 'static,
+	V: Bytesy + 'static,
 {
 	if recursion_level > opts.recursion_limit {
 		return Err(nom::Err::Failure(nom::error::VerboseError {
@@ -979,7 +1019,7 @@ where
 	)
 }
 
-fn with_bool_modifier<'a, I, C, O: Fn(bool, Option<OpMod>) -> Op>(
+fn with_bool_modifier<I, C, O: Fn(bool, Option<OpMod>) -> Op>(
 	opts: ParserOptions,
 	literal: &'static str,
 	op: O,
@@ -1064,13 +1104,17 @@ where
 }
 
 // ^ is right-associative, so we can actually keep it simple and recursive
-fn power<I, C>(recursion_level: usize, input: I, opts: ParserOptions) -> IResult<I, Node>
+fn power<I, C, N, V>(
+	recursion_level: usize,
+	input: I,
+	opts: ParserOptions,
+) -> IResult<I, Node<N, V>>
 where
 	I: Clone
 		+ Copy
 		+ AsBytes
 		+ Compare<&'static str>
-		+ for<'a> Compare<&'a [u8]>
+		+ for<'u> Compare<&'u [u8]>
 		+ InputIter<Item = C>
 		+ InputLength
 		+ InputTake
@@ -1084,6 +1128,8 @@ where
 	C: AsChar + Clone + Copy,
 	&'static str: FindToken<C>,
 	<I as InputIter>::IterElem: Clone,
+	N: Stringy + 'static,
+	V: Bytesy + 'static,
 {
 	surrounded_ws_or_comment(
 		opts,
@@ -1106,13 +1152,17 @@ where
 macro_rules! left_op {
 	// $next is the parser for operator that takes precenence, or any other kind of non-operator token sequence
 	($name:ident, $next:ident, $op:expr) => {
-		fn $name<I, C>(recursion_level: usize, input: I, opts: ParserOptions) -> IResult<I, Node>
+		fn $name<I, C, N, V>(
+			recursion_level: usize,
+			input: I,
+			opts: ParserOptions,
+		) -> IResult<I, Node<N, V>>
 		where
 			I: Clone
 				+ Copy
 				+ AsBytes
 				+ Compare<&'static str>
-				+ for<'a> Compare<&'a [u8]>
+				+ for<'u> Compare<&'u [u8]>
 				+ InputIter<Item = C>
 				+ InputLength
 				+ InputTake
@@ -1126,6 +1176,8 @@ macro_rules! left_op {
 			C: AsChar + Clone + Copy,
 			&'static str: FindToken<C>,
 			<I as InputIter>::IterElem: Clone,
+			N: Stringy + 'static,
+			V: Bytesy + 'static,
 		{
 			surrounded_ws_or_comment(
 				opts,
@@ -1178,17 +1230,17 @@ left_op!(and_unless, comparison, |opts| alt((
 
 left_op!(or_op, and_unless, |opts| with_modifier(opts, "or", Op::Or));
 
-pub(crate) fn expression<I, C>(
+pub(crate) fn expression<N, V, I, C>(
 	recursion_level: usize,
 	input: I,
 	opts: ParserOptions,
-) -> IResult<I, Node>
+) -> IResult<I, Node<N, V>>
 where
 	I: Clone
 		+ Copy
 		+ AsBytes
 		+ Compare<&'static str>
-		+ for<'a> Compare<&'a [u8]>
+		+ for<'u> Compare<&'u [u8]>
 		+ InputIter<Item = C>
 		+ InputLength
 		+ InputTake
@@ -1202,6 +1254,8 @@ where
 	C: AsChar + Clone + Copy,
 	&'static str: FindToken<C>,
 	<I as InputIter>::IterElem: Clone,
+	N: Stringy + 'static,
+	V: Bytesy + 'static,
 {
 	if recursion_level > opts.recursion_limit {
 		return Err(nom::Err::Failure(nom::error::VerboseError {
@@ -1269,7 +1323,7 @@ mod tests {
 
 	fn scalar_single(input: &str, output: f32) {
 		assert_eq!(
-			expression(0, cbs(input), Default::default()),
+			expression::<String, Vec<u8>, _, _>(0, cbs(input), Default::default()),
 			Ok((cbs(""), Scalar(output)))
 		);
 	}
@@ -1669,7 +1723,7 @@ mod tests {
 		}
 
 		assert_eq!(
-			expression(0, format!("a {} b", op).as_str(), opts),
+			expression::<String, Vec<u8>, _, _>(0, format!("a {} b", op).as_str(), opts),
 			Err(nom::Err::Failure(VerboseError {
 				errors: vec![(" b", VerboseErrorKind::Context("reached recursion limit")),],
 			})),
@@ -1678,7 +1732,7 @@ mod tests {
 		op.push('+');
 
 		assert_eq!(
-			expression(0, format!("a {} b", op).as_str(), opts),
+			expression::<String, Vec<u8>, _, _>(0, format!("a {} b", op).as_str(), opts),
 			Err(nom::Err::Failure(VerboseError {
 				errors: vec![("+ b", VerboseErrorKind::Context("reached recursion limit")),],
 			})),
@@ -1698,7 +1752,7 @@ mod tests {
 			use std::io::Write;
 			std::io::stdout().flush().unwrap();
 
-			let _ = expression(0, format!("a {} b", op).as_str(), opts);
+			let _ = expression::<String, Vec<u8>, _, _>(0, format!("a {} b", op).as_str(), opts);
 		}
 	}
 

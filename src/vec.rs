@@ -18,7 +18,7 @@ use crate::{
 	time_duration::TimeDuration,
 	tuple_separated,
 	utils::{surrounded_ws, value, IResult},
-	ParserOptions, NAME,
+	Bytesy, ParserOptions, Stringy, NAME,
 };
 
 /// Label filter operators.
@@ -47,25 +47,33 @@ impl fmt::Display for LabelMatchOp {
 
 /// Single label filter.
 #[derive(Clone, Debug, PartialEq, Hash)]
-pub struct LabelMatch {
-	pub name: String,
+pub struct LabelMatch<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
+	pub name: N,
 	pub op: LabelMatchOp,
-	pub value: Vec<u8>,
+	pub value: V,
 }
 
-impl fmt::Display for LabelMatch {
+impl<N, V> fmt::Display for LabelMatch<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(
 			f,
 			r#"{}{}"{}""#,
 			self.name,
 			self.op,
-			String::from_utf8_lossy(&self.value).replace('\\', "\\\\"),
+			String::from_utf8_lossy(self.value.as_ref()).replace('\\', "\\\\"),
 		)
 	}
 }
 
-fn label_set<I, C>(input: I) -> IResult<I, Vec<LabelMatch>>
+fn label_set<I, C, N, V>(input: I) -> IResult<I, Vec<LabelMatch<N, V>>>
 where
 	I: Clone
 		+ AsBytes
@@ -79,6 +87,8 @@ where
 		+ Slice<RangeTo<usize>>,
 	C: AsChar + Clone,
 	&'static str: FindToken<C>,
+	N: Stringy,
+	V: Bytesy,
 {
 	delimited(
 		char('{'),
@@ -122,16 +132,24 @@ assert_eq!(
 ```
 */
 #[derive(Clone, Debug)]
-pub struct Vector {
+pub struct Vector<N = String, V = Vec<u8>>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	/// Set of label filters
-	pub labels: Vec<LabelMatch>,
+	pub labels: Vec<LabelMatch<N, V>>,
 	/// Range for range vectors, in seconds, e.g. `Some(300.)` for `[5m]`
 	pub range: Option<f64>,
 	/// Offset in seconds, e.g. `Some(3600.)` for `offset 1h`
 	pub offset: Option<f64>,
 }
 
-impl Vector {
+impl<N, V> Vector<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	pub fn name(&self) -> Option<&str> {
 		self.labels
 			.iter()
@@ -140,7 +158,7 @@ impl Vector {
 					// This should never really fail because Prometheus requires
 					// metric names to be valid UTF8, but we can avoid using
 					// unsafe by just transposing and flattening the option.
-					std::str::from_utf8(&l.value)
+					std::str::from_utf8(l.value.as_ref())
 				})
 			})
 			.transpose()
@@ -148,15 +166,15 @@ impl Vector {
 			.flatten()
 	}
 
-	pub fn with_name(self, name: String) -> Self {
+	pub fn with_name(self, name: V) -> Self {
 		self.with_matcher(LabelMatch {
-			name: NAME.to_string(),
+			name: N::from_str(NAME),
 			op: LabelMatchOp::Eq,
-			value: name.into_bytes(),
+			value: name,
 		})
 	}
 
-	pub fn with_matcher(self, label_match: LabelMatch) -> Self {
+	pub fn with_matcher(self, label_match: LabelMatch<N, V>) -> Self {
 		let mut labels = self.labels.clone();
 		if let Some(n) = labels.iter_mut().find(|l| l.name == label_match.name) {
 			n.op = label_match.op;
@@ -169,12 +187,12 @@ impl Vector {
 
 	pub fn renamed<F>(self, func: F) -> Self
 	where
-		F: Fn(Option<&str>) -> String,
+		F: Fn(Option<&str>) -> V,
 	{
 		let name = func(
 			self.labels
 				.iter()
-				.find_map(|l| (l.name == NAME).then(|| std::str::from_utf8(&l.value).ok()))
+				.find_map(|l| (l.name == NAME).then(|| std::str::from_utf8(l.value.as_ref()).ok()))
 				.flatten(),
 		);
 		self.with_name(name)
@@ -199,7 +217,11 @@ impl Vector {
 	}
 }
 
-impl Hash for Vector {
+impl<N, V> Hash for Vector<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
 		let mut labels = self.labels.clone();
 		labels.sort_by(|left, right| left.name.cmp(&right.name));
@@ -209,7 +231,11 @@ impl Hash for Vector {
 	}
 }
 
-impl PartialEq for Vector {
+impl<N, V> PartialEq for Vector<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	fn eq(&self, other: &Self) -> bool {
 		let mut self_labels = self.labels.clone();
 		let mut other_labels = other.labels.clone();
@@ -221,11 +247,15 @@ impl PartialEq for Vector {
 	}
 }
 
-impl fmt::Display for Vector {
+impl<N, V> fmt::Display for Vector<N, V>
+where
+	N: Stringy,
+	V: Bytesy,
+{
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		let mut named = false;
 		if let Some(name) = self.labels.iter().find_map(|label_match| {
-			(label_match.name == NAME).then(|| String::from_utf8_lossy(&label_match.value))
+			(label_match.name == NAME).then(|| String::from_utf8_lossy(label_match.value.as_ref()))
 		}) {
 			named = true;
 			write!(f, "{}", name)?;
@@ -256,7 +286,7 @@ impl fmt::Display for Vector {
 	}
 }
 
-fn instant_vec<I, C>(input: I, opts: ParserOptions) -> IResult<I, Vec<LabelMatch>>
+fn instant_vec<I, C, N, V>(input: I, opts: ParserOptions) -> IResult<I, Vec<LabelMatch<N, V>>>
 where
 	I: Clone
 		+ Copy
@@ -271,6 +301,8 @@ where
 		+ Slice<RangeTo<usize>>,
 	C: AsChar + Clone,
 	&'static str: FindToken<C>,
+	N: Stringy,
+	V: Bytesy,
 {
 	let orig_input = input;
 	let (input, (name, labels)) = tuple_separated!(
@@ -280,9 +312,9 @@ where
 
 	let mut ret = match name {
 		Some(name) => vec![LabelMatch {
-			name: NAME.to_string(),
+			name: N::from_str(NAME),
 			op: LabelMatchOp::Eq,
-			value: name.into_bytes(),
+			value: V::from_bytes(name.as_bytes()),
 		}],
 		None => vec![],
 	};
@@ -424,7 +456,7 @@ where
 	}
 }
 
-pub(crate) fn vector<I, C>(input: I, opts: ParserOptions) -> IResult<I, Vector>
+pub(crate) fn vector<N, V, I, C>(input: I, opts: ParserOptions) -> IResult<I, Vector<N, V>>
 where
 	I: Clone
 		+ Copy
@@ -439,6 +471,8 @@ where
 		+ Slice<RangeTo<usize>>,
 	C: AsChar + Clone,
 	&'static str: FindToken<C>,
+	N: Stringy,
+	V: Bytesy,
 {
 	map(
 		// labels and offset parsers already handle whitespace, no need to use ws!() here
@@ -501,7 +535,7 @@ where
 	)(input)
 }
 
-pub(crate) fn label_name<I, C>(input: I) -> IResult<I, String>
+pub(crate) fn label_name<I, C, N>(input: I) -> IResult<I, N>
 where
 	I: Clone
 		+ AsBytes
@@ -513,13 +547,14 @@ where
 		+ Slice<RangeTo<usize>>,
 	C: AsChar,
 	&'static str: FindToken<C>,
+	N: Stringy,
 {
 	map_res(
 		recognize(tuple((
 			alt((alpha1, is_a("_"))),
 			many0(alt((alphanumeric1, is_a("_")))),
 		))),
-		|s: I| String::from_utf8(s.as_bytes().to_vec()),
+		|s: I| N::from_utf8(s.as_bytes()),
 	)(input)
 }
 
@@ -721,7 +756,7 @@ mod tests {
 		);
 
 		assert_eq!(
-			vector(cbs("{}"), opts),
+			vector::<String, Vec<u8>, _, _>(cbs("{}"), opts),
 			err(vec![(
 				cbs("{}"),
 				VerboseErrorKind::Context(
@@ -790,9 +825,9 @@ mod tests {
 		);
 	}
 
-	fn modified_vectors_for_instant(
+	fn modified_vectors_for_instant<N: Stringy, V: Bytesy>(
 		instant: &str,
-		labels: fn() -> Vec<LabelMatch>,
+		labels: fn() -> Vec<LabelMatch<N, V>>,
 		opts: ParserOptions,
 	) {
 		let v = |tail, range, offset| {
