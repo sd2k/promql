@@ -47,7 +47,7 @@ impl fmt::Display for LabelMatchOp {
 
 /// Single label filter.
 #[derive(Clone, Debug, PartialEq, Hash)]
-pub struct LabelMatch<N, V>
+pub struct LabelMatch<N = String, V = Vec<u8>>
 where
 	N: Stringy,
 	V: Bytesy,
