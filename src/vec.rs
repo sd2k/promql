@@ -170,7 +170,7 @@ where
 	///
 	/// Because Prometheus requires metric names to be valid UTF8, this function
 	/// takes a `Stringy` type, which is guaranteed to be a valid name.
-	pub fn with_name<Name: Stringy>(self, name: Name) -> Self {
+	pub fn with_name<Name: AsRef<str>>(self, name: Name) -> Self {
 		self.with_matcher(LabelMatch {
 			name: N::from_str(NAME),
 			op: LabelMatchOp::Eq,
@@ -194,7 +194,7 @@ where
 	/// Because Prometheus requires metric names to be valid UTF8, this function
 	/// takes a closure that must return a `Stringy` type, which is guaranteed
 	/// to be a valid name.
-	pub fn renamed<F, Name: Stringy>(self, func: F) -> Self
+	pub fn renamed<F, Name: AsRef<str>>(self, func: F) -> Self
 	where
 		F: Fn(Option<&str>) -> Name,
 	{
