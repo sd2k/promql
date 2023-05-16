@@ -18,9 +18,9 @@ use nom::{
 	Offset, Slice,
 };
 
-use crate::str::string;
 use crate::utils::{delimited_ws, value, IResult};
 use crate::vec::{label_name, vector, Vector};
+use crate::{str::string, LabelMatchOp};
 use crate::{tuple_separated, Bytesy, LabelMatch, ParserOptions, Stringy};
 
 /// PromQL operators
@@ -589,7 +589,12 @@ where
 			},
 			Node::Vector(mut v) => {
 				for lm in label_matches {
-					v.labels.push(lm);
+					if let Some(existing) = v.labels.iter_mut().find(|l| l.name == lm.name) {
+						existing.op = LabelMatchOp::Eq;
+						existing.value = lm.value;
+					} else {
+						v.labels.push(lm);
+					}
 				}
 				Node::Vector(v)
 			}
