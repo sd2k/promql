@@ -492,6 +492,9 @@ impl Node {
 	/**
 	Add a set of label matches to all vectors in this node.
 
+	If any of the provided label matches already exist in this node,
+	they will be overridden.
+
 	Note: if any subnodes represent a `label_replace` function, no labels
 	matching the `dst_label` argument of that function will _not_ be added
 	to the label matches, unless `dst_label` is equal to `src_label`.
@@ -512,6 +515,16 @@ impl Node {
 			value: b"200".to_vec(),
 		}]).to_string(),
 		r#"sum(rate(some_series{instance=~"localhost\\d+", code="200"}[5m])) > 100"#.to_string(),
+	);
+	// Note that existing labels are overridden.
+	let node = promql::parse(query, Default::default()).unwrap();
+	assert_eq!(
+		node.add_label_matches(vec![LabelMatch {
+			name: "instance".to_string(),
+			op: LabelMatchOp::Eq,
+			value: b"localhost:3000".to_vec(),
+		}]).to_string(),
+		r#"sum(rate(some_series{instance="localhost:3000"}[5m])) > 100"#.to_string(),
 	);
 	```
 
@@ -568,7 +581,13 @@ impl Node {
 			},
 			Node::Vector(mut v) => {
 				for lm in label_matches {
-					v.labels.push(lm);
+					if let Some(existing) = v.labels.iter_mut().find(|x| x.name == lm.name) {
+						existing.op = lm.op;
+						existing.value = lm.value;
+						continue;
+					} else {
+						v.labels.push(lm);
+					}
 				}
 				Node::Vector(v)
 			}
