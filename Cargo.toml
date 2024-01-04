@@ -10,4 +10,4 @@ edition = "2021"
 [dependencies]
 quick-error = "2.0"
 nom = "7.0"
-builder-pattern = "0.3"
+builder-pattern = "0.4"
