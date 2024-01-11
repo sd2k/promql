@@ -606,10 +606,10 @@ impl Node {
 							x.add_label_matches(
 								label_matches
 									.iter()
-									.cloned()
-									.filter(|x| {
+									.filter(|&x| {
 										x.name.as_bytes() != dst_label || dst_label == src_label
 									})
+									.cloned()
 									.collect(),
 							)
 						})
